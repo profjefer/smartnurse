@@ -1,12 +1,15 @@
-#include "MAX30100_PulseOximeter.h"
-#include "ESP8266WiFi.h"
-
 #include <Wire.h>
-#include <PubSubClient.h> // Importa a Biblioteca PubSubClient
+#include "MAX30100_PulseOximeter.h"
+#include "MAX30100.h"
 
+#include "ESP8266WiFi.h"
+#include <PubSubClient.h>
+
+MAX30100 sensor;
 
 #define REPORTING_PERIOD_MS     1000
 
+//Variaveis
 char mqtt_server [30];
 char mqtt_port [6];
 char id_leito [20];
@@ -15,24 +18,15 @@ char id_leito [20];
 #define mqtt_password "your_password"
 #define id_leito "leito01"
 #define mqtt_port "1883"
-
-////////////////////////
-// wifi estatico
-
 const char* ssid = "Trojan.exe";
 const char* password = "200smt200";
-
-
+float BatimentoCache = 0;
+float BatimentoCache2 = 0;
+int z;
 WiFiClient espClient;
 PubSubClient client(espClient); 
 
-// PulseOximeter is the higher level interface to the sensor
-// it offers:
-//  * beat detection reporting
-//  * heart rate calculation
-//  * SpO2 (oxidation level) calculation
 PulseOximeter pox;
-
 
 uint32_t tsLastReport = 0;
 
@@ -44,13 +38,8 @@ void onBeatDetected()
 
 void setup()
 {
+      Serial.begin(115200);
 
-  Serial.begin(115200);
-
-////////////////
-// wifi estatico
-////////////////
-  
     Serial.printf("Connecting to %s ", ssid);
 
   WiFi.begin(ssid, password);
@@ -79,79 +68,85 @@ void setup()
   Serial.println("Atribuindo Valores ao servidor mqtt:");
   client.setServer(mqtt_server, mqtt_port_b);
   Serial.println("Valores Atribuidos:");
-  
+  float temperature = sensor.retrieveTemperature();
+  Serial.print("done, Temperatura Inicial =");
+  Serial.print(temperature);
+  Serial.println("C");
 
-    // Initialize the PulseOximeter instance and register a beat-detected callback
-    pox.begin();
-    pox.setOnBeatDetectedCallback(onBeatDetected);
+    Serial.print("Initializing pulse oximeter..");
 
-}
-
-void reconnect() {
-  // Loop until we're reconnected
-  while (!client.connected()) {
-      //Serial.print("Attempting MQTT connection...");
-      //Serial.println(mqtt_server);
-      //Serial.println(mqtt_port_b);
-      //Serial.println(id_unidade);
-    // Attempt to connect
-    // If you do not want to use a username and password, change next line to
-    // if (client.connect("ESP8266Client")) {
-    if (client.connect("ESP8266Client", mqtt_user, mqtt_password)) {
-      //Serial.println("connected");
+    // Initialize the PulseOximeter instance
+    // Failures are generally due to an improper I2C wiring, missing power supply
+    // or wrong target chip
+    if (!pox.begin()) {
+        Serial.println("FAILED");
+        for(;;);
     } else {
-      //Serial.print("falha na conexao, rc= ");
-      //Serial.println(mqtt_server);
-      //Serial.println(mqtt_port_b);
-      //Serial.println(id_unidade);
-      //Serial.print(client.state());
-      //Serial.println(" try again in 5 seconds");
-      // Wait 5 seconds before retrying
-      delay(5000);
+        Serial.println("SUCCESS");
     }
-  }
+
+    // The default current for the IR LED is 50mA and it could be changed
+    //   by uncommenting the following line. Check MAX30100_Registers.h for all the
+    //   available options.
+    pox.setIRLedCurrent(MAX30100_LED_CURR_30_6MA);
+
+    // Register a callback for the beat detection
+    pox.setOnBeatDetectedCallback(onBeatDetected);
 }
-
-
-
 
 void loop()
 {
-
-
-//WiFiClient client;
-
-  if (!client.connected()) {
-    reconnect();
-  }
-  
+  int i = 0;
+  while (i<1000000){
     // Make sure to call update as fast as possible
     pox.update();
 
+     if (!client.connected()) {
+    while (!client.connected()) {
+    if (client.connect("ESP8266Client")) {
+    } 
+  }
+}
+  
     // Asynchronously dump heart rate and oxidation levels to the serial
     // For both, a value of 0 means "invalid"
     if (millis() - tsLastReport > REPORTING_PERIOD_MS) {
         Serial.print("Heart rate:");
         Serial.print(pox.getHeartRate());
+        String bpm = (".bpm");
+        String keyleito = id_leito + bpm;
+        client.publish(String(keyleito).c_str(), String(pox.getHeartRate()).c_str(), true);
         Serial.print("bpm / SpO2:");
         Serial.print(pox.getSpO2());
         Serial.println("%");
-
-        tsLastReport = millis();
-
-        String bpm = (".bpm");
-        String keyleito = id_leito + bpm;
-
         String SpO2 = (".SpO2");
         String keyleito2 = id_leito + SpO2;
+        client.publish(String(keyleito2).c_str(), String(pox.getSpO2()).c_str(), true);
+        BatimentoCache = pox.getHeartRate();
 
+        float temperature = sensor.retrieveTemperature();
+        Serial.print("Temperatura do sensor=");
+        Serial.print(temperature);
+        Serial.println("C");
+        
+        if ( BatimentoCache2 == BatimentoCache){
+          Serial.println("IGUAL");
+        i++;
+        Serial.print (i);
+        Serial.println ("- Batidas Iguais");
+        z=0;
+        }else {
+          z++;
+          Serial.print (z);
+          Serial.println("- Batidas Diferentes");
+          Serial.println("Zerando as batidas iguais.");
+          i=0;
+        }
+        
+        tsLastReport = millis();
 
-        if (!client.connected()) {
-          reconnect();
-          
-          }
-          
-          client.publish(String(keyleito).c_str(), String(pox.getHeartRate()).c_str(), true);
-          client.publish(String(keyleito2).c_str(), String(pox.getSpO2()).c_str(), true);
     }
+        
+  }
+  ESP.restart();
 }
