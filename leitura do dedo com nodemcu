@@ -1,9 +1,7 @@
 #include "ESP8266WiFi.h" 
 #include <Wire.h>
-#include <OneWire.h>
 #include "MAX30100_PulseOximeter.h" //biblioteca do oximetro/BPM
 #include "MAX30100.h" //biblioteca do oximetro/BPM
-#include <DallasTemperature.h> //biblioteca do termometro
 #include <PubSubClient.h> //biblioteca MQTT
 
 MAX30100 sensor;
@@ -19,45 +17,15 @@ const char* password = "200smt200";
 //Variaveis para o sensor oximetro
 float BatimentoCache = 0;
 float BatimentoCache2 = 0;
-int z;
-int w = 0; //contador para medir a temperatura
-int k = 50; //contagem regreciva para medir temperatura 
-// Variaveis para o sensor de temperatura (Armazena temperaturas minima e maxima)
-//float tempMin = 999;
-//float tempMax = 0;
-//float temp; // Variavel que armazena a temperatura
-//float umidade; // Variavel que armazena a umidade
-//float tempC;
 
-
-
-
-
-#define mqtt_server "10.10.100.11" // endereço do servidor zabbix
+#define mqtt_server "192.168.88.254" // endereço do servidor zabbix
 #define mqtt_user "your_username"
 #define mqtt_password "your_password"
 #define id_leito "leito01" // Nome do item zabbix
 #define mqtt_port "1883" // Porta do SERVER MQTT
 
-#define ONE_WIRE_BUS D4 // Porta do pino de sinal do DS18B20 - PINO D4
-OneWire oneWire(ONE_WIRE_BUS); // Define uma instancia do oneWire para comunicacao com o sensor
-DallasTemperature sensors(&oneWire);
-
-//DeviceAddress sensor1;
-
 WiFiClient espClient;
 PubSubClient client(espClient); 
-
-//funcao para mapeador o sensor de temperatura
-//void mostra_endereco_sensor(DeviceAddress deviceAddress)
-//{
-//  for (uint8_t i = 0; i < 8; i++)
-//  {
-//    // Adiciona zeros se necessário
-//    if (deviceAddress[i] < 16) Serial.print("0");
-//    Serial.print(deviceAddress[i], HEX);
-//  }
-//}
 
 PulseOximeter pox;
 
@@ -66,7 +34,7 @@ uint32_t tsLastReport = 0;
 // Callback (registered below) fired when a pulse is detected
 void onBeatDetected()
 {
-    Serial.print("RUSBÉ! ");
+    Serial.println("RUSBÉ! ");
     //Acende o led
   digitalWrite(D5, HIGH);
    
@@ -84,22 +52,6 @@ void setup()
 {
       Serial.begin(115200);
       pinMode(D5, OUTPUT);
-
-  //bloco setup do sensor de temperatura
-  //sensors.begin();
-  // Localiza e mostra enderecos dos sensores
-  //    Serial.println("Localizando sensores DS18B20...");
-  //    Serial.print("Foram encontrados ");
-  //    Serial.print(sensors.getDeviceCount(), DEC);
-  //    Serial.println(" sensores.");
- // if (!sensors.getAddress(sensor1, 0)) 
-   //  Serial.println("Sensores nao encontrados !"); 
-  // Mostra o endereco do sensor encontrado no barramento
-  //   Serial.print("Endereco sensor: ");
-//  mostra_endereco_sensor(sensor1);
- //     Serial.println();
- //     Serial.println();
- //     delay(3000);
 
     Serial.printf("Connecting to %s ", ssid);
 
@@ -129,10 +81,6 @@ void setup()
   Serial.println("Atribuindo Valores ao servidor mqtt:");
   client.setServer(mqtt_server, mqtt_port_b);
   Serial.println("Valores Atribuidos:");
-  //float temperature = sensor.retrieveTemperature();
-  //Serial.print("done, Temperatura Inicial =");
-  //Serial.print(temperature);
-  //Serial.println("C");
 
     Serial.print("Initializing pulse oximeter..");
 
@@ -157,89 +105,38 @@ void setup()
 
 void loop()
 {
-    // Asynchronously dump heart rate and oxidation levels to the serial
-    // For both, a value of 0 means "invalid"
-    int i = 0;
-    int z = 0;
-
-    while (i<100)
-    {
-     
      pox.update();
-     BatimentoCache2 = BatimentoCache;
-     
-     //yield();         
      if (millis() - tsLastReport > REPORTING_PERIOD_MS) {
-        //delay(100);
-        Serial.println (" - ");
-        Serial.print("Heart rate:");
+        Serial.print("Batimento: ");
         Serial.print(pox.getHeartRate());
         String bpm = (".bpm");
         String keyleito = id_leito + bpm;
         client.publish(String(keyleito).c_str(), String(pox.getHeartRate()).c_str(), true);
-        Serial.print("bpm / SpO2:");
+        Serial.print("bpm / Oxigenação SpO2: ");
         Serial.print(pox.getSpO2());
-        Serial.print("% - ");
-        tsLastReport = millis();
         String SpO2 = (".SpO2");
-        String keyleito2 = id_leito + SpO2;
+        String keyleito2 = id_leito + SpO2; 
         client.publish(String(keyleito2).c_str(), String(pox.getSpO2()).c_str(), true);
-        BatimentoCache = pox.getHeartRate();
-        
-        
-        if (BatimentoCache == 0 or BatimentoCache2 == BatimentoCache){
+        Serial.println("% ");
+        tsLastReport = millis();            
+}                  
+
+          while (!client.connected()) {
+          Serial.print("Attempting MQTT connection...");
+          if (client.connect("ESP8266Client", mqtt_user, mqtt_password)) {
+          Serial.println("connected");
           
-          Serial.print ("NOTA ZERO !!");
-          z++;
-          if (z==10){
-            i=10000;
+          Serial.print("Initializing pulse oximeter..");
+
+          // Initialize the PulseOximeter instance
+          // Failures are generally due to an improper I2C wiring, missing power supply
+          // or wrong target chip
+          if (!pox.begin()) {
+              Serial.println("FAILED");
+              for(;;);
+          } else {
+              Serial.println("SUCCESS");
           }
-        }
-      i++;
-      Serial.println (i);
-      delay(1);
-
-      if (!client.connected()) {
-    while (!client.connected()) {
-    if (client.connect("ESP8266Client")) {
-    }
-    }
-    }
-}
-
-    }
-
-// BLOCO LOOP DO SENSOR DE TEMPERATURA
-        //-------------------------------------------------------------------------
-        sensors.begin();
-          
-        Serial.print(" Requesting temperatures..."); 
-        sensors.requestTemperatures(); // Send the command to get temperature readings 
-        Serial.println("DONE ---->");
-        Serial.println("Temperature is: "); 
-        Serial.println(sensors.getTempCByIndex(0)); // Why "byIndex"?  
-        
-        // You can have more than one DS18B20 on the same bus.  
-        // 0 refers to the first IC on the wire 
-          String temp = (".temp");
-          String keyleito3 = id_leito + temp;
-          client.publish(String(keyleito3).c_str(), String(sensors.getTempCByIndex(0)).c_str(), true);
-          delay(1000); 
-          Serial.println("---------------------");
-          Serial.println("Temperatura enviada");
-          Serial.print("---------------------");
-
-
-        if (!pox.begin()) {
-        Serial.print(" - SENSOR OFF");
-        //for(;;);
-    } else {
-        Serial.println(" - SENSOR ON");
-    }
-        //        
-
-          
-    //}
-    
-    //ESP.clear();              
-    }
+          }
+          }
+}                       
